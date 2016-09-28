@@ -56,6 +56,7 @@ type buildOptions struct {
 	forceRm        bool
 	pull           bool
 	cacheFrom      []string
+	volumes        opts.ListOpts
 }
 
 // NewBuildCommand creates a new `docker build` command
@@ -65,6 +66,7 @@ func NewBuildCommand(dockerCli *client.DockerCli) *cobra.Command {
 		tags:      opts.NewListOpts(validateTag),
 		buildArgs: opts.NewListOpts(runconfigopts.ValidateEnv),
 		ulimits:   runconfigopts.NewUlimitOpt(&ulimits),
+		volumes:   opts.NewListOpts(nil),
 	}
 
 	cmd := &cobra.Command{
@@ -100,6 +102,7 @@ func NewBuildCommand(dockerCli *client.DockerCli) *cobra.Command {
 	flags.BoolVarP(&options.quiet, "quiet", "q", false, "Suppress the build output and print image ID on success")
 	flags.BoolVar(&options.pull, "pull", false, "Always attempt to pull a newer version of the image")
 	flags.StringSliceVar(&options.cacheFrom, "cache-from", []string{}, "Images to consider as cache sources")
+	flags.VarP(&options.volumes, "volume", "v", "Bind mount a volume")
 
 	client.AddTrustedFlags(flags, true)
 
@@ -245,6 +248,13 @@ func runBuild(dockerCli *client.DockerCli, options buildOptions) error {
 		}
 	}
 
+	// only allow bind-mounting during build
+	for bind := range options.volumes.GetMap() {
+		if arr := runconfigopts.VolumeSplitN(bind, 2); len(arr) == 1 {
+			return fmt.Errorf("Cannot use non-bind mount during build: %s", bind)
+		}
+	}
+
 	buildOptions := types.ImageBuildOptions{
 		Memory:         memory,
 		MemorySwap:     memorySwap,
@@ -268,6 +278,7 @@ func runBuild(dockerCli *client.DockerCli, options buildOptions) error {
 		AuthConfigs:    dockerCli.RetrieveAuthConfigs(),
 		Labels:         runconfigopts.ConvertKVStringsToMap(options.labels),
 		CacheFrom:      options.cacheFrom,
+		Volumes:        options.volumes.GetAll(),
 	}
 
 	response, err := dockerCli.Client().ImageBuild(ctx, body, buildOptions)
